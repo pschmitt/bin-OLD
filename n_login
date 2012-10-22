@@ -1,0 +1,7 @@
+#!/usr/bin/env sh
+
+if [[ $1 = "-p" ]]; then
+    grep -A2 -E "machine[[:space:]]+$2" ~/.netrc | sed -nr 's/password *(.*)/\1/p'
+else
+    grep -A2 -E "machine[[:space:]]+$1" ~/.netrc | sed -nr 's/login *(.*)/\1/p'
+fi

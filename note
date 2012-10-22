@@ -1,0 +1,91 @@
+#!/usr/bin/env zsh
+
+# config section
+NOTES_DIR="$HOME/docs/notes"
+NOTES_FILE="$NOTES_DIR/NOTES"
+TODO_FILE="$NOTES_DIR/TODO"
+TOWATCH_FILE="$NOTES_DIR/TOWATCH"
+IDEAS_FILE="$NOTES_DIR/IDEAS"
+
+fn=$NOTES_FILE
+
+usage() {
+    echo "usage: $0 [-e] [-i|t|w]"
+    echo "  -e: edit with $EDITOR"
+    echo "  -i: use IDEAS file"
+    echo "  -t: use TODO file"
+    echo "  -w: use TOWATCH file"
+    echo "  -h: print this help"
+}
+
+show_note() {
+    fn=$1
+    [[ -f $fn ]] || return 1
+    [[ -z $EDIT ]] && cat $fn || $EDITOR $fn
+    return 0
+}
+
+write_note() {
+    [[ -d $NOTES_DIR ]] || mkdir -p $NOTES_DIR
+    fn=$1
+    shift
+    [[ -f $fn ]] || touch $fn
+    echo -- $@ >> $fn
+    return 0
+}
+
+# no param ? -> print file !
+[[ $# -eq 0 ]] && CAT=1
+
+while getopts "ekhitw" opt; do
+    case $opt in
+        e)
+            # edit
+            EDIT=1
+            ;;
+        k)
+            # echo "-k triggered"
+            DEL=1
+            ;;
+        h)
+            usage
+            return 0
+            ;;
+        i)
+            # echo "-i was triggered, Parameter: $OPTARG" >&2
+            fn=$IDEAS_FILE
+            ;;
+        t)
+            # echo "-t triggered"
+            fn=$TODO_FILE
+            ;;
+        w)
+            # echo "-w triggered"
+            fn=$TOWATCH_FILE
+            ;;
+         \?)
+            echo "Invalid option: -$OPTARG" >&2
+            exit 1
+            ;;
+        :)
+            echo "Option -$OPTARG requires an argument." >&2
+            exit 1
+            ;;
+    esac
+done
+
+shift $(($OPTIND - 1))
+
+test $DEL && (rm -i $fn; return 0)
+
+if test -z "$*";then
+    if test -n $CAT;then
+        show_note $fn
+    fi
+else
+    write_note $fn $@
+fi
+
+#[[ -z $* ]] && ([[ -n $CAT ]] && show_note $fn) || write_note $fn $@
+
+return 0

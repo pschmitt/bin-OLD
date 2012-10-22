@@ -1,0 +1,107 @@
+#!/bin/bash
+# Author: Philipp Schmitt
+# Version: 1.3
+
+#USER=pschmitt
+CONFIG_FILE="/etc/conf.d/xrdr.conf"
+USER_CONFIG_FILE="$HOME/.config/xrdr.conf"
+
+#if [[ "$(whoami)" != "$USER" ]]; then
+#    exec su $USER -c "$0 $* 2> /tmp/xrdr.log" 
+#fi
+
+[[ -r $USER_CONFIG_FILE ]] && . $USER_CONFIG_FILE || ( [[ -r $CONFIG_FILE ]] && . $CONFIG_FILE )
+
+
+[[ -z "$DISPLAY" ]] && export DISPLAY=:0
+[[ -z "$XAUTHORITY" ]] && export XAUTHORITY=$HOME/.Xauthority
+
+SCREENS=($(xrandr | grep " connected" | awk '{ print $1 }' | tr '\n' ' ' ))
+if [[ -z $PRIMARY_SCREEN ]] || [[ "${SCREENS[@]}" =~ "$PRIMARY_SCREEN " ]] ; then
+    PRIMARY_SCREEN=${SCREENS[0]}
+fi
+if [[ -z $EXTERNAL_SCREEN ]] || [[ "${SCREENS[@]}" =~ "$SECONDARY_SCREEN " ]] ; then
+    #EXTERNAL_SCREEN=${SCREENS[${#SCREENS[@]}]}
+   EXTERNAL_SCREEN=${SCREENS[1]} 
+fi
+
+#echo ${SCREENS[@]} > /tmp/screens.log
+echo -e 'PRIMARY_SCREEN="'$PRIMARY_SCREEN'"'"\n"'EXTERNAL_SCREEN="'$EXTERNAL_SCREEN'"' > $USER_CONFIG_FILE # no priviliedges !
+ 
+function count() {
+    echo ${#SCREENS[@]}
+    exit 0
+}
+
+function copy() {
+    disconnect
+    xrandr --output $EXTERNAL_SCREEN --auto \
+           --output $PRIMARY_SCREEN --same-as $EXTERNAL_SCREEN --primary 
+}
+
+function extend() {
+    disconnect
+    xrandr --output $PRIMARY_SCREEN --primary --auto \
+           --output $EXTERNAL_SCREEN --auto --right-of $PRIMARY_SCREEN 
+}
+
+function primary_only() {
+    disconnect
+    [[ ${#SCREENS[@]} -gt 1 ]] && xrandr --output $EXTERNAL_SCREEN --off
+    xrandr --output $PRIMARY_SCREEN --auto --primary
+}
+
+function secondary_only() {
+    disconnect
+    [[ ${#SCREENS[@]} -gt 1 ]] && xrandr --output $PRIMARY_SCREEN --off
+    xrandr --output $EXTERNAL_SCREEN --auto --primary 
+}
+
+function disconnect() {
+    #local disconnected_outputs=($(xrandr | grep "disconnected" | awk '{ print $1 }' | tr '\n' ' '))
+    #for output in "${disconnected_outputs[@]}"; do
+    #    xrandr --output $output --off
+    #done
+    xrandr --auto
+    #[[ ${#SCREENS[@]} -gt 1 ]] && xrandr --output ${SCREENS[1]} --off
+}
+
+function auto() {
+    #local connection_status=$(cat /sys/class/drm/card0-HDMI-A-1/status)
+    #[[ "$connection_status" = "connected" ]] && extend || primary_only
+    [[ ${#SCREENS[@]} -gt 1 ]] && extend || primary_only
+}
+
+case "$1" in
+    count|c)
+        count
+        ;;
+    primary|p)
+        primary_only
+        ;;
+    extend|e)
+        extend
+        ;;
+    copy|cp)
+        copy
+        ;;
+    projector|pr)
+        secondary_only
+        ;;
+    *)
+        auto
+        ;;
+esac
+
+lbar_id=$(xwininfo -name 'xmonad_lbar' | grep 'Window id' | awk '{ print $4 }')
+rbar_id=$(xwininfo -name 'xmonad_rbar' | grep 'Window id' | awk '{ print $4 }')
+
+[[ -n "$lbar_id" ]] && xkill -id $lbar_id
+[[ -n "$rbar_id" ]] && xkill -id $rbar_id
+
+xmonad --restart
+#(sleep 2 && sh $HOME/.fehbg)&
+sleep 2 && nitrogen --restore
+
+exit 0
+
