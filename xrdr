@@ -66,6 +66,10 @@ function disconnect() {
     #[[ ${#SCREENS[@]} -gt 1 ]] && xrandr --output ${SCREENS[1]} --off
 }
 
+function toggle() {
+    [[ ${#SCREENS[@]} -gt 1 ]] && primary_only || extend 
+}
+
 function auto() {
     #local connection_status=$(cat /sys/class/drm/card0-HDMI-A-1/status)
     #[[ "$connection_status" = "connected" ]] && extend || primary_only
@@ -87,6 +91,9 @@ case "$1" in
         ;;
     projector|pr)
         secondary_only
+        ;;
+    toggle|t)
+        toggle
         ;;
     *)
         auto
