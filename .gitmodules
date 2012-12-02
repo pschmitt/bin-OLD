@@ -1,0 +1,3 @@
+[submodule "ipwebcam-gst"]
+	path = ipwebcam-gst
+	url = https://github.com/bluezio/ipwebcam-gst.git
