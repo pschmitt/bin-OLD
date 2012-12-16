@@ -44,7 +44,7 @@ function count() {
 }
 
 function save_conf() {
-    echo 'PRIMARY_SCREEN="'$PRIMARY_SCREEN'"' >> $USER_CONFIG_FILE
+    echo 'PRIMARY_SCREEN="'$PRIMARY_SCREEN'"' > $USER_CONFIG_FILE
     echo 'SECONDARY_SCREEN="'$SECONDARY_SCREEN'"' >> $USER_CONFIG_FILE
     echo 'TERTIARY_SCREEN="'$TERTIARY_SCREEN'"' >> $USER_CONFIG_FILE
 }
@@ -151,8 +151,8 @@ esac
 #[[ -n "$lbar_id" ]] && xkill -id $lbar_id
 #[[ -n "$rbar_id" ]] && xkill -id $rbar_id
 
-#xmonad --restart
-sleep 2 && nitrogen --restore
+xmonad --restart &
+(sleep 2 && nitrogen --restore) &
 
 exit 0
 

@@ -10,7 +10,7 @@ IDEAS_FILE="$NOTES_DIR/IDEAS"
 fn=$NOTES_FILE
 
 usage() {
-    echo "usage: $0 [-e] [-i|t|w]"
+    echo "usage: $1 [-e] [-i|t|w]"
     echo "  -e: edit with $EDITOR"
     echo "  -i: use IDEAS file"
     echo "  -t: use TODO file"
@@ -48,7 +48,7 @@ while getopts "ekhitw" opt; do
             DEL=1
             ;;
         h)
-            usage
+            usage $(basename $0)
             return 0
             ;;
         i)
