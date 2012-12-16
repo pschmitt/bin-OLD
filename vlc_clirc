@@ -1,14 +1,10 @@
 #!/bin/zsh
 # Author: Philipp Schmitt
 # Version: 1.0
-# TODO: - Add -h $VLC_HOST and -p $VLC_PORT 
-#       - support for env vars
-#       - error handling
 
 [[ -z "$VLC_HOST" ]] && VLC_HOST="localhost"
 [[ -z "$VLC_PORT" ]] && VLC_PORT="8080"
 
-RC_URL="http://$VLC_HOST:$VLC_PORT/requests/status.xml?command="
 
 usage() {
     echo "Usage: $1 CMD [-h VLC_HOST] [-p VLC_PORT]"
@@ -75,8 +71,8 @@ while getopts ":h:p:" opt; do
 done
 
 shift $(($OPTIND - 1))
-
 echo -n "$VLC_HOST:$VLC_PORT -> "
+RC_URL="http://$VLC_HOST:$VLC_PORT/requests/status.xml?command="
 
 case "$1" in
     pause|play|toggle|p|t)
