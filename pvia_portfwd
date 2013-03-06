@@ -1,0 +1,90 @@
+#!/bin/bash -x
+
+PASSWD_FILE="/etc/openvpn/privateinternetaccess/passwd"
+CLIENT_ID_FILE="/etc/openvpn/privateinternetaccess/clientid"
+TRANSMISSION_SETTINGS_FILE="/home/dl/.config/transmission-daemon/settings.json"
+PVIA_OPEN_PORT_FILE="/etc/openvpn/privateinternetaccess/open_port"
+PVIA_OPEN_PORT="$(cat $PVIA_OPEN_PORT_FILE)"
+
+# Checks if executed as root. If not reinvoke self with sudo
+function check_root() { 
+    [[ $EUID -ne 0 ]] && { echo -e "This script must be run as root\nInvoking sudo -- $0 $*" 1>&2; exec sudo -- $0 $*; }
+}
+
+# Checks if the OpenVPN service is running
+function check_ovpn() {
+    local ovpnd="$(systemctl -t service | grep 'openvpn@.* active')"
+    if [[ -z "$ovpnd" ]]; then
+        echo 'OpenVPN service not running !' >&2
+        exit 1
+    fi
+}
+
+# Return a new client ID
+function new_client_id() {
+    head -n 100 /dev/urandom | md5sum | tr -d " -" | tee $CLIENT_ID_FILE 
+}
+
+function request_port() {
+    local username="$(head -1 $PASSWD_FILE)"
+    local passwd="$(tail -1 $PASSWD_FILE)"
+    local local_vpn_ip="$(ifconfig tun0 | grep inet | awk '{ print $2 }')"
+    local client_id="$(cat $CLIENT_ID_FILE)"
+    echo -e "Updating port forwarding..."
+    [[ "$1" == "-n" ]] && { echo -e "(Requesting a new port)"; client_id=$(new_client_id); }
+    echo -e "Username: $username"
+    echo "Client ID: $client_id"
+    echo "VPN local IP: $local_vpn_ip"
+    PVIA_OPEN_PORT_NEW="$(curl -d "user=$username&pass=$passwd&client_id=$client_id&local_ip=$local_vpn_ip" https://www.privateinternetaccess.com/vpninfo/port_forward_assignment | grep -oE "[0-9]+" | tee $PVIA_OPEN_PORT_FILE)"
+    echo "Done ! New port: $PVIA_OPEN_PORT_NEW (Previous: $PVIA_OPEN_PORT)"
+}
+
+function transmission_peer_port_update() {
+    local transmission_peer_port="$(grep 'peer-port\"' $TRANSMISSION_SETTINGS_FILE | grep -Eo '[0-9]+')"
+    
+    echo -n "Updating transmission's listening port... "
+    # Check if transmission is running
+    if systemctl is-active transmissiond > /dev/null 2>&1; then
+        # get current listening port 
+        transmission_peer_port="$(transmission-remote -si | grep Listenport | grep -oE '[0-9]+')"
+        if [[ "$PVIA_OPEN_PORT_NEW" != "$transmission_peer_port" ]]; then
+            transmission-remote -p "$PVIA_OPEN_PORT_NEW"
+            # systemctl restart transmissiond
+        fi
+    else
+        # write new listening port to config
+        if [[ "$PVIA_OPEN_PORT_NEW" != "$transmission_peer_port" ]]; then
+            sed -i 's/\(\"peer-port\":\).*,/\1 '$PVIA_OPEN_PORT_NEW',/' $TRANSMISSION_SETTINGS_FILE 
+            # systemctl start transmissiond
+        fi
+    fi
+    echo 'Done !'
+}
+
+# Delete previous rule from ufw
+function ufw_delete_old_rule() {
+    [[ -n "$PVIA_OPEN_PORT" ]] && ufw delete allow $PVIA_OPEN_PORT
+}
+
+# Add a new rule to ufw
+function ufw_add_new_rule () {
+    [[ -n "$PVIA_OPEN_PORT_NEW" ]] && ufw allow $PVIA_OPEN_PORT_NEW
+}
+
+# Update ufw rules
+function ufw_update() {
+    # Check if ufw is running
+    systemctl is-active ufw > /dev/null 2>&1 || return 1
+    echo -n "Updating UFW rules... "
+    ufw_delete_old_rule
+    ufw_add_new_rule
+    echo 'Done !'
+}
+
+echo -e "--\n$(date)"
+check_root "$*"               # check permissions
+check_ovpn                    # check if OpenVPN is running
+request_port                  # Request a port
+ufw_update                    # Update firewall rules
+transmission_peer_port_update # Update Transmission's peer port
+
