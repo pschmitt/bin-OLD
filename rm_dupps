@@ -1,0 +1,30 @@
+#/bin/zsh
+# Remove dupplicates files created by error
+# Removes only if both files are the same
+# file to keep: something.txt
+# file to remove: something (2).txt 
+
+#find /mnt/raid/docs -iname "*(2).*" >> /tmp/dupplicates
+
+#for file in "$(cat /tmp/dupplicates)"; do
+#    echo "Do I need to remove $file ?"
+#done
+
+SAVEIFS=$IFS
+IFS=$(echo -en "\n\b")
+for f in $(find /mnt/raid/docs -iname "*(2).*")
+do
+    #echo "Remove $f ?"
+    NORMAL_FN=$(echo $f | sed 's/ (2)\./\./')
+    #echo $NORMAL_FN
+    if diff $f $NORMAL_FN >/dev/null ; then
+        echo "OK: $f and $NORMAL_FN are the same \!"
+        echo -n "Removing $f..."
+        rm $f
+        echo 'Done !'
+    else
+        echo "$f and $NORMAL_FN are different..." >
+    fi
+done
+IFS=$SAVEIFS
+

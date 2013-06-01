@@ -1,0 +1,9 @@
+#!/bin/bash
+
+AUR_PKG_LIST_FILE=/var/lib/pacman/pkg.aur.list
+PKG_LIST_FILE=/var/lib/pacman/pkg.list
+
+PKG_LIST=$(yaourt -Qet)
+grep -Ev "^local/" <<< "$PKG_LIST" > $PKG_LIST_FILE
+sed -n 's/^local\//aur\//p' <<< "$PKG_LIST" > $AUR_PKG_LIST_FILE 
+

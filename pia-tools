@@ -1,19 +1,28 @@
 #!/bin/bash
 # Sources: iptables -> https://www.privateinternetaccess.com/forum/index.php?p=/discussion/35/block-non-vpn-traffic-on-linux-with-iptables-protect-against-disconnect/p1
+# Dependencies: transmission-daemon rename openvpn systemd sudo wget curl
 
-PASSWD_FILE="/etc/openvpn/privateinternetaccess/passwd"
-CLIENT_ID_FILE="/etc/openvpn/privateinternetaccess/clientid"
+PIA_CONFIG_DIR="/etc/openvpn/privateinternetaccess"
+PIA_CONFIG_URL="https://www.privateinternetaccess.com/openvpn/openvpn.zip"
+PIA_COMMON_CONFIG="$PIA_CONFIG_DIR/pia_common"
+PIA_SERVERS_FILE=$PIA_CONFIG_DIR/piaservers
+PIA_SERVERS_IP_FILE=$PIA_CONFIG_DIR/piaserverips
+PASSWD_FILE="$PIA_CONFIG_DIR/passwd"
+CLIENT_ID_FILE="$PIA_CONFIG_DIR/clientid"
 TRANSMISSION_SETTINGS_FILE="/home/dl/.config/transmission-daemon/settings.json"
-PVIA_OPEN_PORT_FILE="/etc/openvpn/privateinternetaccess/open_port"
-PVIA_OPEN_PORT="$(cat $PVIA_OPEN_PORT_FILE)"
+PIA_OPEN_PORT_FILE="$PIA_CONFIG_DIR/open_port"
+PIA_OPEN_PORT="$(cat $PIA_OPEN_PORT_FILE)"
+TMPDIR="/tmp/pia"
 
 function usage() {
-    echo "Usage: $1 [-p|r] [-u|b] [-h]"
+    echo "Usage: $1 [-p|r] [-a|d] [-u] [-c] [-h]"
     echo "-p: Request new port"
     echo "-r: Refresh (request port forwarding again) [default]"
-    echo "-b: Block non VPN traffic (iptables)"
-    echo "-u: Unblock non VPN traffic (iptables)"
-    echo "-h: Display this help message"
+    echo "-a: Block non VPN traffic (iptables)"
+    echo "-d: Unblock non VPN traffic (iptables) [default]"
+    echo "-u: Update configuration files" 
+    echo "-c: Ensure OpenVPN is running. If not stop transmissiond"
+    echo "-h: Display this message"
 }
 
 # Checks if executed as root. If not reinvoke self with sudo
@@ -21,23 +30,53 @@ function check_root() {
     [[ $EUID -ne 0 ]] && { echo -e "This script must be run as root\nInvoking sudo -- $0 $*" 1>&2; exec sudo -- $0 $*; }
 }
 
+function _myip() {
+    wget --quiet -O - checkip.dyndns.org | sed -e 's/[^:]*: //' -e 's/<.*$//'
+}
+
+function _locate_ip() {
+    geoiplookup $1
+}
+
+function check_transmission() {
+    systemctl is-active transmissiond > /dev/null 2>&1
+}
+
 # Checks if the OpenVPN service is running
 function check_ovpn() {
     local ovpnd="$(systemctl -t service | grep 'openvpn@.* active')"
     if [[ -z "$ovpnd" ]]; then
         echo 'OpenVPN service not running !' >&2
-        # exit 1
+        check_transmission && { echo -n 'Stopping transmissiond... '; systemctl stop transmissiond; echo 'Done !'; } || echo "Transmissiond not running"
+        iplist_unblock
+        return 1 
     fi
+}
+
+function info() {
+    local vpn_exit="$(systemctl -t service | grep 'openvpn@.* active' | awk '{ print $NF }')"
+    local ext_ip="$(_myip)"
+    check_ovpn && echo "OpenVPN is running (Exit point: $vpn_exit)"
+    echo "IP: $ext_ip"
+    echo "GeoIP: $(_locate_ip $ext_ip)"
+}
+
+function _ufw_port_allowed() {
+    ufw status | grep -E "^$1\s+ALLOW" > /dev/null
 }
 
 # Delete previous rule from ufw
 function _ufw_delete_old_rule() {
-    [[ -n "$PVIA_OPEN_PORT" ]] && ufw delete allow $PVIA_OPEN_PORT
+    if [[ -n "$PIA_OPEN_PORT" ]] && _ufw_port_allowed "$PIA_OPEN_PORT"; then
+        ufw delete allow $PIA_OPEN_PORT
+    fi
 }
 
 # Add a new rule to ufw
 function _ufw_add_new_rule () {
-    [[ -n "$PVIA_OPEN_PORT_NEW" ]] && ufw allow $PVIA_OPEN_PORT_NEW
+    if [[ -n "$PIA_OPEN_PORT_NEW" ]] && _ufw_port_allowed "$PIA_OPEN_PORT_NEW"; then
+        ufw allow $PIA_OPEN_PORT_NEW
+    fi
 }
 
 # Update ufw rules
@@ -47,6 +86,7 @@ function ufw_update() {
     echo -n "Updating UFW rules... "
     _ufw_delete_old_rule
     _ufw_add_new_rule
+    ufw reload > /dev/null
     echo 'Done !'
 }
 
@@ -54,23 +94,23 @@ function transmission_peer_port_update() {
     local transmission_peer_port="$(grep 'peer-port\"' $TRANSMISSION_SETTINGS_FILE | grep -Eo '[0-9]+')"
     echo -n "Updating transmission's listening port... "
     # Check if transmission is running
-    if systemctl is-active transmissiond > /dev/null 2>&1; then
+    if check_transmission; then
         # get current listening port
         transmission_peer_port="$(transmission-remote -si | grep Listenport | grep -oE '[0-9]+')"
-        if [[ "$PVIA_OPEN_PORT_NEW" != "$transmission_peer_port" ]]; then
-            transmission-remote -p "$PVIA_OPEN_PORT_NEW"
+        if [[ "$PIA_OPEN_PORT_NEW" != "$transmission_peer_port" ]]; then
+            transmission-remote -p "$PIA_OPEN_PORT_NEW"
             # systemctl restart transmissiond
+            echo 'Checking port...'
+            sleep 2 && transmission-remote -pt
         fi
     else
         # write new listening port to config
-        if [[ -n "$PVIA_OPEN_PORT_NEW" ]] && [[ "$PVIA_OPEN_PORT_NEW" != "$transmission_peer_port" ]]; then
+        if [[ -n "$PIA_OPEN_PORT_NEW" ]] && [[ "$PIA_OPEN_PORT_NEW" != "$transmission_peer_port" ]]; then
             echo "Writing new peer port to transmission's settings.json..."
-            sed -i 's/\(\"peer-port\":\).*,/\1 '$PVIA_OPEN_PORT_NEW',/' $TRANSMISSION_SETTINGS_FILE
+            sed -i 's/\(\"peer-port\":\).*,/\1 '$PIA_OPEN_PORT_NEW',/' $TRANSMISSION_SETTINGS_FILE
         fi
-        systemctl restart transmissiond
+        check_ovpn && systemctl restart transmissiond 
     fi
-    echo 'Checking port...'
-    sleep 2 && transmission-remote -pt
     echo 'Done !'
 }
 
@@ -82,227 +122,109 @@ function new_client_id() {
 function request_port() {
     local username="$(head -1 $PASSWD_FILE)"
     local passwd="$(tail -1 $PASSWD_FILE)"
-    local local_vpn_ip="$(ifconfig tun0 | grep inet | awk '{ print $2 }')"
+    local local_vpn_ip="$(ip addr show tun0 | grep inet | awk '{ print $2 }')"
     local client_id="$1"
     #[[ -z "$client_id" ]] || client_id=$(new_client_id)
-    echo -e "Updating port forwarding..."
-    echo -e "Username: $username"
-    echo "Client ID: $client_id"
-    echo "VPN local IP: $local_vpn_ip"
-    PVIA_OPEN_PORT_NEW="$(curl -d "user=$username&pass=$passwd&client_id=$client_id&local_ip=$local_vpn_ip" https://www.privateinternetaccess.com/vpninfo/port_forward_assignment | grep -oE "[0-9]+" | tee $PVIA_OPEN_PORT_FILE)"
-    echo "Done ! New port: $PVIA_OPEN_PORT_NEW (Previous: $PVIA_OPEN_PORT)"
-    ufw_update                    # Update firewall rules
-    transmission_peer_port_update # Update Transmission's peer port
+    echo -n "Updating port forwarding... "
+    if test $VERBOSE; then
+        echo "Username: $username"
+        echo "Client ID: $client_id"
+        echo "VPN local IP: $local_vpn_ip"
+    fi
+    PIA_OPEN_PORT_NEW="$(curl -s -d "user=$username&pass=$passwd&client_id=$client_id&local_ip=$local_vpn_ip" https://www.privateinternetaccess.com/vpninfo/port_forward_assignment | grep -oE "[0-9]+" 2>&1)"
+    if [[ -n "$PIA_OPEN_PORT_NEW" ]]; then
+        echo $PIA_OPEN_PORT_NEW > $PIA_OPEN_PORT_FILE
+        echo "Done ! New port: $PIA_OPEN_PORT_NEW (Previous: $PIA_OPEN_PORT)"
+        ufw_update                    # Update firewall rules
+        transmission_peer_port_update # Update Transmission's peer port
+   else
+        echo 'Failed'
+   fi
 }
 
+function update_config() {
+    echo -n 'Updating configuration... '
+    local ovpn_file
+
+    # Clean up
+    rm -f $PIA_CONFIG_DIR/ca.crt $PIA_CONFIG_DIR/*.ovpn
+    
+    # Fetch server config files
+    wget -N -q --directory-prefix=$PIA_CONFIG_DIR $PIA_CONFIG_URL
+    unzip -d $PIA_CONFIG_DIR -q $PIA_CONFIG_DIR/openvpn.zip 
+    
+    # Replace space by underscore in filenames 
+    rename ' ' '_' *.ovpn
+    # Append up/down scripts to every ovpn file
+    for ovpn_file in $(ls -1 $PIA_CONFIG_DIR/*.ovpn); do 
+        cat $PIA_COMMON_CONFIG  >> $ovpn_file
+    done
+    
+    # Extract server addresses and resolve hosts
+    grep -h "remote " $PIA_CONFIG_DIR/*.ovpn | cut -d ' ' -f 2 | sort -u > $PIA_SERVERS_FILE
+    cat $PIA_SERVERS_FILE | nslookup | grep Address | grep -v "192.168.1.1" | awk '{ print $2 }' > $PIA_SERVERS_IP_FILE
+
+    # why is following dig cmd failing randomly ?
+    #dig -f /tmp/piaservers A +short | sort > $PIA_SERVERS_IP_FILE 
+    echo 'Done !'
+}
 
 function iplist_block() {
-    echo block
+    echo -n 'Blocking non VPN-traffic... '
+    check_ovpn || return 0
+    [[ -f $PIA_SERVERS_IP_FILE ]] || update_config
+    # Add PIA server IPs to script
+    local ip_list=$(tr '\n' ' ' < $PIA_SERVERS_IP_FILE)
+    [[ -n "$ip_list" ]] || { echo 'IP list is empty !' >2; exit 2; }
+    # Start building iptables blocklist
     iptables -F
     iptables -A INPUT -i tun+ -j ACCEPT
     iptables -A OUTPUT -o tun+ -j ACCEPT
     iptables -A INPUT -s 127.0.0.1 -j ACCEPT
     iptables -A OUTPUT -d 127.0.0.1 -j ACCEPT
-    iptables -A INPUT -s 208.53.158.136 -j ACCEPT
-    iptables -A OUTPUT -d 208.53.158.136 -j ACCEPT
-    iptables -A INPUT -s 208.53.158.116 -j ACCEPT
-    iptables -A OUTPUT -d 208.53.158.116 -j ACCEPT
-    iptables -A INPUT -s 208.53.158.93 -j ACCEPT
-    iptables -A OUTPUT -d 208.53.158.93 -j ACCEPT
-    iptables -A INPUT -s 67.159.60.116 -j ACCEPT
-    iptables -A OUTPUT -d 67.159.60.116 -j ACCEPT
-    iptables -A INPUT -s 208.53.158.171 -j ACCEPT
-    iptables -A OUTPUT -d 208.53.158.171 -j ACCEPT
-    iptables -A INPUT -s 67.159.60.80 -j ACCEPT
-    iptables -A OUTPUT -d 67.159.60.80 -j ACCEPT
-    iptables -A INPUT -s 208.53.158.45 -j ACCEPT
-    iptables -A OUTPUT -d 208.53.158.45 -j ACCEPT
-    iptables -A INPUT -s 108.61.47.139 -j ACCEPT
-    iptables -A OUTPUT -d 108.61.47.139 -j ACCEPT
-    iptables -A INPUT -s 108.61.41.219 -j ACCEPT
-    iptables -A OUTPUT -d 108.61.41.219 -j ACCEPT
-    iptables -A INPUT -s 108.61.55.67 -j ACCEPT
-    iptables -A OUTPUT -d 108.61.55.67 -j ACCEPT
-    iptables -A INPUT -s 108.61.55.75 -j ACCEPT
-    iptables -A OUTPUT -d 108.61.55.75 -j ACCEPT
-    iptables -A INPUT -s 108.61.59.19 -j ACCEPT
-    iptables -A OUTPUT -d 108.61.59.19 -j ACCEPT
-    iptables -A INPUT -s 108.61.59.27 -j ACCEPT
-    iptables -A OUTPUT -d 108.61.59.27 -j ACCEPT
-    iptables -A INPUT -s 108.61.56.203 -j ACCEPT
-    iptables -A OUTPUT -d 108.61.56.203 -j ACCEPT
-    iptables -A INPUT -s 108.61.57.43 -j ACCEPT
-    iptables -A OUTPUT -d 108.61.57.43 -j ACCEPT
-    iptables -A INPUT -s 108.61.50.107 -j ACCEPT
-    iptables -A OUTPUT -d 108.61.50.107 -j ACCEPT
-    iptables -A INPUT -s 108.61.50.108 -j ACCEPT
-    iptables -A OUTPUT -d 108.61.50.108 -j ACCEPT
-    iptables -A INPUT -s 108.61.55.68 -j ACCEPT
-    iptables -A OUTPUT -d 108.61.55.68 -j ACCEPT
-    iptables -A INPUT -s 108.61.55.69 -j ACCEPT
-    iptables -A OUTPUT -d 108.61.55.69 -j ACCEPT
-    iptables -A INPUT -s 184.95.54.226 -j ACCEPT
-    iptables -A OUTPUT -d 184.95.54.226 -j ACCEPT
-    iptables -A INPUT -s 198.15.96.194 -j ACCEPT
-    iptables -A OUTPUT -d 198.15.96.194 -j ACCEPT
-    iptables -A INPUT -s 198.15.98.58 -j ACCEPT
-    iptables -A OUTPUT -d 198.15.98.58 -j ACCEPT
-    iptables -A INPUT -s 198.15.108.194 -j ACCEPT
-    iptables -A OUTPUT -d 198.15.108.194 -j ACCEPT
-    iptables -A INPUT -s 198.15.70.2 -j ACCEPT
-    iptables -A OUTPUT -d 198.15.70.2 -j ACCEPT
-    iptables -A INPUT -s 198.24.138.58 -j ACCEPT
-    iptables -A OUTPUT -d 198.24.138.58 -j ACCEPT
-    iptables -A INPUT -s 23.29.123.114 -j ACCEPT
-    iptables -A OUTPUT -d 23.29.123.114 -j ACCEPT
-    iptables -A INPUT -s 23.29.127.214 -j ACCEPT
-    iptables -A OUTPUT -d 23.29.127.214 -j ACCEPT
-    iptables -A INPUT -s 23.29.126.102 -j ACCEPT
-    iptables -A OUTPUT -d 23.29.126.102 -j ACCEPT
-    iptables -A INPUT -s 23.29.119.226 -j ACCEPT
-    iptables -A OUTPUT -d 23.29.119.226 -j ACCEPT
-    iptables -A INPUT -s 23.29.113.66 -j ACCEPT
-    iptables -A OUTPUT -d 23.29.113.66 -j ACCEPT
-    iptables -A INPUT -s 192.211.53.106 -j ACCEPT
-    iptables -A OUTPUT -d 192.211.53.106 -j ACCEPT
-    iptables -A INPUT -s 50.23.113.204 -j ACCEPT
-    iptables -A OUTPUT -d 50.23.113.204 -j ACCEPT
-    iptables -A INPUT -s 50.23.65.34 -j ACCEPT
-    iptables -A OUTPUT -d 50.23.65.34 -j ACCEPT
-    iptables -A INPUT -s 50.23.113.217 -j ACCEPT
-    iptables -A OUTPUT -d 50.23.113.217 -j ACCEPT
-    iptables -A INPUT -s 50.23.113.233 -j ACCEPT
-    iptables -A OUTPUT -d 50.23.113.233 -j ACCEPT
-    iptables -A INPUT -s 50.23.113.234 -j ACCEPT
-    iptables -A OUTPUT -d 50.23.113.234 -j ACCEPT
-    iptables -A INPUT -s 50.23.65.53 -j ACCEPT
-    iptables -A OUTPUT -d 50.23.65.53 -j ACCEPT
-    iptables -A INPUT -s 50.23.113.251 -j ACCEPT
-    iptables -A OUTPUT -d 50.23.113.251 -j ACCEPT
-    iptables -A INPUT -s 50.23.113.245 -j ACCEPT
-    iptables -A OUTPUT -d 50.23.113.245 -j ACCEPT
-    iptables -A INPUT -s 50.23.115.73 -j ACCEPT
-    iptables -A OUTPUT -d 50.23.115.73 -j ACCEPT
-    iptables -A INPUT -s 50.23.115.67 -j ACCEPT
-    iptables -A OUTPUT -d 50.23.115.67 -j ACCEPT
-    iptables -A INPUT -s 50.23.115.88 -j ACCEPT
-    iptables -A OUTPUT -d 50.23.115.88 -j ACCEPT
-    iptables -A INPUT -s 68.68.17.37 -j ACCEPT
-    iptables -A OUTPUT -d 68.68.17.37 -j ACCEPT
-    iptables -A INPUT -s 76.10.222.61 -j ACCEPT
-    iptables -A OUTPUT -d 76.10.222.61 -j ACCEPT
-    iptables -A INPUT -s 68.68.22.151 -j ACCEPT
-    iptables -A OUTPUT -d 68.68.22.151 -j ACCEPT
-    iptables -A INPUT -s 68.68.17.21 -j ACCEPT
-    iptables -A OUTPUT -d 68.68.17.21 -j ACCEPT
-    iptables -A INPUT -s 68.68.17.47 -j ACCEPT
-    iptables -A OUTPUT -d 68.68.17.47 -j ACCEPT
-    iptables -A INPUT -s 76.10.222.45 -j ACCEPT
-    iptables -A OUTPUT -d 76.10.222.45 -j ACCEPT
-    iptables -A INPUT -s 76.10.222.80 -j ACCEPT
-    iptables -A OUTPUT -d 76.10.222.80 -j ACCEPT
-    iptables -A INPUT -s 68.68.29.120 -j ACCEPT
-    iptables -A OUTPUT -d 68.68.29.120 -j ACCEPT
-    iptables -A INPUT -s 199.193.119.32 -j ACCEPT
-    iptables -A OUTPUT -d 199.193.119.32 -j ACCEPT
-    iptables -A INPUT -s 37.130.230.4 -j ACCEPT
-    iptables -A OUTPUT -d 37.130.230.4 -j ACCEPT
-    iptables -A INPUT -s 5.63.144.28 -j ACCEPT
-    iptables -A OUTPUT -d 5.63.144.28 -j ACCEPT
-    iptables -A INPUT -s 37.130.227.140 -j ACCEPT
-    iptables -A OUTPUT -d 37.130.227.140 -j ACCEPT
-    iptables -A INPUT -s 5.63.150.60 -j ACCEPT
-    iptables -A OUTPUT -d 5.63.150.60 -j ACCEPT
-    iptables -A INPUT -s 5.63.151.36 -j ACCEPT
-    iptables -A OUTPUT -d 5.63.151.36 -j ACCEPT
-    iptables -A INPUT -s 176.227.206.250 -j ACCEPT
-    iptables -A OUTPUT -d 176.227.206.250 -j ACCEPT
-    iptables -A INPUT -s 31.3.253.10 -j ACCEPT
-    iptables -A OUTPUT -d 31.3.253.10 -j ACCEPT
-    iptables -A INPUT -s 31.7.56.170 -j ACCEPT
-    iptables -A OUTPUT -d 31.7.56.170 -j ACCEPT
-    iptables -A INPUT -s 46.19.139.98 -j ACCEPT
-    iptables -A OUTPUT -d 46.19.139.98 -j ACCEPT
-    iptables -A INPUT -s 31.7.57.198 -j ACCEPT
-    iptables -A OUTPUT -d 31.7.57.198 -j ACCEPT
-    iptables -A INPUT -s 85.159.236.209 -j ACCEPT
-    iptables -A OUTPUT -d 85.159.236.209 -j ACCEPT
-    iptables -A INPUT -s 109.201.135.220 -j ACCEPT
-    iptables -A OUTPUT -d 109.201.135.220 -j ACCEPT
-    iptables -A INPUT -s 77.247.182.241 -j ACCEPT
-    iptables -A OUTPUT -d 77.247.182.241 -j ACCEPT
-    iptables -A INPUT -s 77.247.182.246 -j ACCEPT
-    iptables -A OUTPUT -d 77.247.182.246 -j ACCEPT
-    iptables -A INPUT -s 85.159.236.214 -j ACCEPT
-    iptables -A OUTPUT -d 85.159.236.214 -j ACCEPT
-    iptables -A INPUT -s 85.159.237.3 -j ACCEPT
-    iptables -A OUTPUT -d 85.159.237.3 -j ACCEPT
-    iptables -A INPUT -s 85.159.237.4 -j ACCEPT
-    iptables -A OUTPUT -d 85.159.237.4 -j ACCEPT
-    iptables -A INPUT -s 109.201.152.5 -j ACCEPT
-    iptables -A OUTPUT -d 109.201.152.5 -j ACCEPT
-    iptables -A INPUT -s 85.159.236.219 -j ACCEPT
-    iptables -A OUTPUT -d 85.159.236.219 -j ACCEPT
-    iptables -A INPUT -s 198.144.156.144 -j ACCEPT
-    iptables -A OUTPUT -d 198.144.156.144 -j ACCEPT
-    iptables -A INPUT -s 199.21.149.243 -j ACCEPT
-    iptables -A OUTPUT -d 199.21.149.243 -j ACCEPT
-    iptables -A INPUT -s 198.144.156.141 -j ACCEPT
-    iptables -A OUTPUT -d 198.144.156.141 -j ACCEPT
-    iptables -A INPUT -s 184.75.208.2 -j ACCEPT
-    iptables -A OUTPUT -d 184.75.208.2 -j ACCEPT
-    iptables -A INPUT -s 184.75.209.250 -j ACCEPT
-    iptables -A OUTPUT -d 184.75.209.250 -j ACCEPT
-    iptables -A INPUT -s 184.75.210.42 -j ACCEPT
-    iptables -A OUTPUT -d 184.75.210.42 -j ACCEPT
-    iptables -A INPUT -s 184.75.216.170 -j ACCEPT
-    iptables -A OUTPUT -d 184.75.216.170 -j ACCEPT
-    iptables -A INPUT -s 184.75.216.162 -j ACCEPT
-    iptables -A OUTPUT -d 184.75.216.162 -j ACCEPT
-    iptables -A INPUT -s 184.75.216.202 -j ACCEPT
-    iptables -A OUTPUT -d 184.75.216.202 -j ACCEPT
-    iptables -A INPUT -s 184.75.213.34 -j ACCEPT
-    iptables -A OUTPUT -d 184.75.213.34 -j ACCEPT
-    iptables -A INPUT -s 184.75.213.42 -j ACCEPT
-    iptables -A OUTPUT -d 184.75.213.42 -j ACCEPT
-    iptables -A INPUT -s 46.165.208.207 -j ACCEPT
-    iptables -A OUTPUT -d 46.165.208.207 -j ACCEPT
-    iptables -A INPUT -s 5.39.68.159 -j ACCEPT
-    iptables -A OUTPUT -d 5.39.68.159 -j ACCEPT
-    iptables -A INPUT -s 130.185.155.130 -j ACCEPT
-    iptables -A OUTPUT -d 130.185.155.130 -j ACCEPT
-    iptables -A INPUT -s 93.114.44.187 -j ACCEPT
-    iptables -A OUTPUT -d 93.114.44.187 -j ACCEPT
-    iptables -A INPUT -s 93.114.43.244 -j ACCEPT
-    iptables -A OUTPUT -d 93.114.43.244 -j ACCEPT
+
+    for IP in $ip_list; do
+        iptables -A INPUT -s ${IP} -j ACCEPT
+        iptables -A OUTPUT -d ${IP} -j ACCEPT
+    done
+
+    # Allow connecting to local network 
+    iptables -A INPUT -s 192.168.1.0/24 -j ACCEPT
+    iptables -A OUTPUT -d 192.168.1.0/24 -j ACCEPT
+    # Disallow other connections 
     iptables -A INPUT -j DROP
     iptables -A OUTPUT -j DROP
+    echo 'Done !'
 }
 
 function iplist_unblock() {
-    echo "Unblocking ..."
+    echo -n 'Unblocking ... '
     iptables -F
     iptables -A INPUT -j ACCEPT
     iptables -A OUTPUT -j ACCEPT
+    echo 'Done !'
 }
 
 
 check_root "$*"               # check permissions
-echo -e "--\n$(date)"
-check_ovpn                    # check if OpenVPN is running
+#echo -e "--\n$(date)"
 
 # If no option -> refresh
-[[ $# -eq 0 ]] && port_action=refresh
+# When started by OpenVPN daemon (up script) this script gets called like this: $0 tun0 1500 1542 10.185.1.6 10.185.1.5 init
+if [[ $# -eq 0 ]] || [[ $# -eq 6 && $1 == "tun0" ]]; then
+    port_action=refresh 
+    #ip_action=disallow
+fi  
 
-while getopts ':burph-' OPTION ; do
+while getopts ':adprciuh-' OPTION ; do
     case "$OPTION" in
-        b)
+        a)
             test $ip_action && exit 1
-            ip_action=block
+            ip_action=allow
             ;;
-        u)
+        d)
             test $ip_action && exit 1
-            ip_action=unblock
+            ip_action=disallow
             ;;
         p)
             test $port_action && exit 1
@@ -311,6 +233,15 @@ while getopts ':burph-' OPTION ; do
         r)
             test $port_action && exit 1
             port_action=refresh
+            ;;
+        u)
+            update=update
+            ;;
+        c)
+            check=check
+            ;;
+        i)
+            info=info
             ;;
         -)
             [ $OPTIND -ge 1 ] && optind=$(expr $OPTIND - 1 ) || optind=$OPTIND
@@ -326,13 +257,22 @@ while getopts ':burph-' OPTION ; do
                     test $port_action && exit 1
                     port_action=refresh
                     ;;
-                --block)
+                --allow)
                     test $ip_action && exit 1
-                    ip_action=block
+                    ip_action=allow
                     ;;
-                --unblock)
+                --disallow)
                     test $ip_action && exit 1
-                    ip_action=unblock
+                    ip_action=disallow
+                    ;;
+                --update)
+                    update=update
+                    ;;
+                --check)
+                    check=check
+                    ;;
+                --info)
+                    info=info
                     ;;
                 *)
                     usage $(basename $0)
@@ -347,15 +287,24 @@ while getopts ':burph-' OPTION ; do
     esac
 done
 
+[[ -n $update ]] && update_config
+
 if [[ -n "$port_action" ]]; then
     client_id=$(cat $CLIENT_ID_FILE)
     if [[ -z "$client_id" ]] || [[ "$port_action" == "portfwd" ]]; then
         client_id=$(new_client_id)
     fi
+    check_ovpn 
     request_port $client_id
-    unset client_id
+    unset client_id port_action
 fi
 
 if [[ -n "$ip_action" ]]; then
-    [[ "$ip_action" == "block" ]] && iplist_block || iplist_unblock
+    [[ "$ip_action" == "disallow" ]] && iplist_block || iplist_unblock
+    unset ip_action
 fi
+
+[[ -n "$check" ]] && check_ovpn
+[[ -n "$info" ]] && info
+
+exit 0

@@ -1,0 +1,97 @@
+#/bin/sh
+
+HOME_COUNTRY_SHORT="DE"
+
+function usage() {
+    echo "Usage: $1 [-a] [-c] [-s] [-h]"
+    echo "-a: Print all -> format: IP (COUNTRY)" 
+    echo "-c: Print country info" 
+    echo "-s: Print country info short" 
+    echo "-h: Display this message"
+}
+
+function save() {
+    if test $IP; then
+        [[ -z $XDG_DATA_HOME ]] && local XDG_DATA_HOME=~/.local/share
+        echo $IP > $XDG_DATA_HOME/ip
+    fi
+}
+
+function ip() { 
+    IP=$(curl -s checkip.dyndns.org | sed -e 's/[^:]*: //' -e 's/<.*$//')
+    [[ -z "$IP" ]] && { echo -e "Couldn't get your IP \!\nPlease check your network configuration. Otherwise, checkip.dyndns.org may be down." >2; exit 2; }
+}
+
+function country() {
+    test $IP || ip 
+    geoiplookup $IP | awk '{ print $5 }'
+}
+
+function country_short() {
+    test $IP || ip
+    geoiplookup $IP | awk '{ print $4 }' | sed 's/\(.*\),/\1/'
+}
+
+function print_ip() {
+    ip 
+    echo $IP
+}
+
+function print_short() {
+    ip
+    echo "$IP ($(country_short))" 
+}
+
+function print_conky() {
+    ip
+    local country=$(country_short) country_color
+    [[ "$country" == "$HOME_COUNTRY_SHORT" ]] && { country_color="^fg(red)"; echo -n "$country_color^i(/home/pschmitt/pictures/icons/xbm8x8/info_03.xbm) "; }
+    echo "^fg()$IP ($country_color$(country_short)^fg())" 
+}
+
+function print_all() {
+    ip
+    echo "$IP ($(country))"
+}
+
+[[ $# -eq 0 ]] && ACTION=default
+
+while getopts ':ackhsw-' OPTION; do
+    case "$OPTION" in
+        a)
+            ACTION=all
+            ;;
+        c)
+            ACTION=country
+            ;;
+        k)
+            ACTION=conky
+            ;;
+        s)
+            SHORT=1
+            ;;
+        w)
+            ACTION=warn
+            ;;
+        ?)
+            usage $(basename $0)
+            ;;
+    esac
+done
+
+case "$ACTION" in
+    default)
+        print_ip 
+        ;;
+    all)
+        test $SHORT && print_short || print_all
+        ;;
+    conky)
+        print_conky 
+        ;;
+    country)
+        test $SHORT && country_short || country
+        ;;
+esac
+
+save
