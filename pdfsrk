@@ -1,0 +1,83 @@
+#!/bin/sh
+# Author: Philipp Schmitt (philipp <at> schmitt <dot> co)
+# License: WTFPL
+# Shrink a PDF File
+# Dependencies: rename ghostscript
+
+# Constants
+PRESET_SCREEN="screen"     # low-resolution
+PRESET_EBOOK="ebook"       # medium-resolution
+PRESET_PRINTER="printer"   # high-resolution 
+PRESET_PREPRESS="prepress" # even higher ?
+PRESETS="$PRESET_SCREEN $PRESET_EBOOK $PRESET_PRINTER $PRESET_PREPRESS "
+
+SUFFIX_TMP="srk"
+SUFFIX_ORIG="orig"
+
+
+function usage() {
+    echo "Usage: $1 [-c screen|ebook|printer|prepress] [-f] [-v] INPUT_FILE"
+    echo "-c: Compression settings. For more details, see gs manpage (default: ebook)"
+    echo "-f: Do not keep the original file"
+    echo "-v: Verbose output"
+}
+
+
+while getopts ':hfvc:' opt; do
+    case "$opt" in
+        h)
+            usage
+            exit 0
+            ;;
+        v)
+            VERBOSE=1
+            ;;
+        f)
+            FORCE=true
+            ;;
+        c)
+            for preset in $PRESETS; do
+                if [[ "$OPTARG" == "$preset" ]]; then
+                    PRESET="$OPTARG"
+                    break
+                fi
+            done
+            if [[ -z "$PRESET" ]]; then
+                usage
+                exit 1
+            fi
+            ;;
+        :)
+            echo "Option -$OPTARG requires an argument." >&2
+            exit 1
+            ;;
+    esac
+done
+
+shift $(($OPTIND - 1))
+
+INFILE="$*"
+TMPFILE="${INFILE}_$SUFFIX_TMP" 
+
+[[ -z "$INFILE" ]] && { usage $(basename $0); exit 0; }
+[[ -r "$INFILE" && -f "$INFILE" ]] ||  { echo "Couldn't open $INFILE" >&2; exit 1; }
+
+[[ -z "$PRESET" ]] && PRESET=$PRESET_EBOOK # /ebook is the default preset
+
+[[ -n "$VERBOSE" ]] && echo "Using preset: $PRESET"
+
+gs -sDEVICE=pdfwrite -dCompatibilityLevel=1.4 -dPDFSETTINGS=/$PRESET -dNOPAUSE -dQUIET -dBATCH -sOutputFile=$TMPFILE $INFILE
+
+if [[ -n "$VERBOSE" ]]; then
+    SIZE_ORIG=$(du $INFILE | awk '{ print $1 }')
+    SIZE_NEW=$(du $TMPFILE | awk '{ print $1 }')
+    SIZEDIFF=$(($SIZE_ORIG-$SIZE_NEW))
+    echo "Filesize reduced by ${SIZEDIFF}K"
+fi    
+
+rename -v '.pdf' "_${SUFFIX_ORIG}.pdf" "$INFILE"
+rename -v ".pdf_${SUFFIX_TMP}" '.pdf' "$TMPFILE"
+
+if [[ -n "$FORCE" ]]; then
+    rm -i $INFILE
+fi
