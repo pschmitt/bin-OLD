@@ -1,0 +1,67 @@
+#!/bin/sh
+# Author: Philipp Schmitt (philipp <at> schmitt <dot> co)
+# License: WTFPL
+# Rotate a PDF File (pdftk wrapper)
+# Dependencies: rename pdftk 
+
+# Constants
+declare -A ROTATIONS
+ROTATIONS[90]="right" 
+ROTATIONS[180]="down" 
+ROTATIONS[270]="left" 
+
+SUFFIX_TMP="tmp"
+SUFFIX_ORIG="orig"
+
+function usage() {
+    echo "Usage: $1 [-f] [-v] ROTATION FILE"
+    echo "-h: Display this text"
+    echo "-v: Verbose output"
+    echo "-f: Do not keep the original file (overwrite)"    
+    echo "ROTATION: 90|180|270"
+}
+
+[[ $# -lt 2 ]] && { usage; exit 1; }
+
+while getopts ':hvf' opt; do
+    case "$opt" in
+        h)
+            usage
+            exit 0
+            ;;
+        v)
+            VERBOSE="-v"
+            ;;
+        f)
+            FORCE=1
+            ;;
+        :)
+            echo "Option -$OPTARG requires an argument." >&2
+            exit 1
+            ;;
+    esac
+done
+
+shift $(($OPTIND - 1))
+
+DESIRED_ROTATION=${ROTATIONS[$1]}
+[[ -z "$DESIRED_ROTATION" ]] && { usage; exit 1; }
+shift
+INFILE="$*"
+TMPFILE="${INFILE}_$SUFFIX_TMP" 
+
+[[ -z "$INFILE" ]] && { usage $(basename $0); exit 0; }
+[[ -r "$INFILE" && -f "$INFILE" ]] || { echo "Couldn't open $INFILE" >&2; exit 1; }
+
+[[ -n "$VERBOSE" ]] && echo "Rotating by $DESIRED_ROTATION"
+
+pdftk "$INFILE" cat 1-end${DESIRED_ROTATION} output "$TMPFILE" > /dev/null 2>&1
+
+[[ $? -ne 0 || ! -e $TMPFILE ]] && { echo "Rotation failed\!"; exit 2; }
+
+if [[ -n "$FORCE" ]]; then
+    rm "$INFILE"
+else
+    rename $VERBOSE '.pdf' "_${SUFFIX_ORIG}.pdf" "$INFILE"
+fi
+rename $VERBOSE ".pdf_${SUFFIX_TMP}" '.pdf' "$TMPFILE"
