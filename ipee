@@ -19,7 +19,7 @@ function save() {
 
 function ip() { 
     IP=$(curl -s checkip.dyndns.org | sed -e 's/[^:]*: //' -e 's/<.*$//')
-    [[ -z "$IP" ]] && { echo -e "Couldn't get your IP \!\nPlease check your network configuration. Otherwise, checkip.dyndns.org may be down." >&2; exit 2; }
+    [[ -z "$IP" ]] && { echo -e "Couldn't get your IP !\nPlease check your network configuration. Otherwise, checkip.dyndns.org may be down." >&2; exit 2; }
 }
 
 function country() {
