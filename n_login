@@ -5,3 +5,5 @@ if [[ $1 = "-p" ]]; then
 else
     grep -A2 -E "machine[[:space:]]+$1" ~/.netrc | sed -nr 's/login *(.*)/\1/p'
 fi
+
+[[ $(stat -c '%a' ~/.netrc) -eq 600 ]] || echo "File perms aren't correctly set. Consider a chmod 600 ~/.netrc"
