@@ -1,0 +1,43 @@
+#!/bin/zsh
+# Wrapper for sendElro (433 Mhz)
+# License: WTFPL
+
+usage() {
+    echo "Usage: $1 [ID] [on|off]"
+    echo "ID: Integer (0-3). If not provided, on|off gets broadcasted"
+    exit 0 
+}
+
+lamp() {
+    local i=$(echo "2^$1" | bc -l)
+    local cmd="/home/pschmitt/bin/433.92-Raspberry-Pi/433-send -p elro -u 1 -r 10 -i"
+    cmd="${cmd} $i"
+    [[ "$2" == "on" ]] && cmd="${cmd} -t" || cmd="${cmd} -t --off"
+    echo $cmd
+    # TODO: Wouldn't "sudo $cmd" be enough ?
+    sudo su -c $cmd
+}
+
+# Lamp on/off
+lon() {
+    sudo su -c "/home/pschmitt/bin/433.92-Raspberry-Pi/433-send -p elro -i 1 -u 1 -t -r 10; /home/pschmitt/bin/433.92-Raspberry-Pi/433-send -p elro -i 2 -u 1 -t -r 10; /home/pschmitt/bin/433.92-Raspberry-Pi/433-send -p elro -i 4 -u 1 -t -r 10; /home/pschmitt/bin/433.92-Raspberry-Pi/433-send -p elro -i 8 -u 1 -t -r 10"
+}
+
+loff() {
+    sudo su -c "/home/pschmitt/bin/433.92-Raspberry-Pi/433-send -p elro -i 1 -u 1 -r 10 -t --off; /home/pschmitt/bin/433.92-Raspberry-Pi/433-send -p elro -i 2 -u 1 -r 10 -t --off; /home/pschmitt/bin/433.92-Raspberry-Pi/433-send -p elro -i 4 -u 1 -r 10 -t --off; /home/pschmitt/bin/433.92-Raspberry-Pi/433-send -p elro -i 8 -u 1 -r 10 -t --off"
+}
+
+case $# in
+    1)
+        # Broadcast
+        [[ "$1" == "on" ]] && lon || loff
+        ;;
+    2)
+        # Selectively turn one lamp on or off
+        lamp $1 $2
+        ;;
+    *)
+        usage $(basename $0)
+        ;;
+esac
+
