@@ -1,7 +1,8 @@
 #!/usr/bin/env zsh
 
 # config section
-NOTES_DIR="$HOME/docs/notes"
+[[ -f ${XDG_CONFIG_HOME:-~/.config}/user-dirs.dirs ]] && source ${XDG_CONFIG_HOME:-~/.config}/user-dirs.dirs
+NOTES_DIR="${XDG_DOCUMENTS_DIR-${HOME}/Documents}/notes"
 NOTES_FILE="$NOTES_DIR/NOTES"
 TODO_FILE="$NOTES_DIR/TODO"
 TOWATCH_FILE="$NOTES_DIR/TOWATCH"
