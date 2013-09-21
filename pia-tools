@@ -216,7 +216,7 @@ check_root "$*" # check permissions
 
 # If no option -> refresh
 # When started by OpenVPN daemon (up script) this script gets called like this: $0 tun0 1500 1542 10.185.1.6 10.185.1.5 init
-if [[ $# -eq 0 ]] || [[ $# -gt 6 ]]; then
+if [[ $# -eq 0 ]] || [[ $# -gt 5 ]]; then
     port_action=refresh 
     #ip_action=disallow
 fi  
