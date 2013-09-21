@@ -7,3 +7,6 @@
 [submodule "GCalCron2"]
 	path = GCalCron2
 	url = https://github.com/fabriceb/GCalCron2.git
+[submodule "pia-tools"]
+	path = pia-tools
+	url = https://github.com/pschmitt/pia-tools
