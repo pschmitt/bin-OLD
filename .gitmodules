@@ -1,9 +1,6 @@
 [submodule "ipwebcam-gst"]
 	path = ipwebcam-gst
 	url = https://github.com/bluezio/ipwebcam-gst.git
-[submodule "433.92-Raspberry-Pi"]
-	path = 433.92-Raspberry-Pi
-	url = https://github.com/CurlyMoo/433.92-Raspberry-Pi.git
 [submodule "GCalCron2"]
 	path = GCalCron2
 	url = https://github.com/fabriceb/GCalCron2.git

@@ -10,9 +10,9 @@ usage() {
 
 lamp() {
     local i=$(echo "2^$1" | bc -l)
-    local cmd="/home/pschmitt/bin/433.92-Raspberry-Pi/433-send -p elro -u 1 -r 10 -i"
+    local cmd="pilight-send -p elro -s 1 -u"
     cmd="${cmd} $i"
-    [[ "$2" == "on" ]] && cmd="${cmd} -t" || cmd="${cmd} -t --off"
+    [[ "$2" == "on" ]] && cmd="${cmd} -t" || cmd="${cmd} -f"
     echo $cmd
     # TODO: Wouldn't "sudo $cmd" be enough ?
     sudo su -c $cmd
@@ -20,11 +20,11 @@ lamp() {
 
 # Lamp on/off
 lon() {
-    sudo su -c "/home/pschmitt/bin/433.92-Raspberry-Pi/433-send -p elro -i 1 -u 1 -t -r 10; /home/pschmitt/bin/433.92-Raspberry-Pi/433-send -p elro -i 2 -u 1 -t -r 10; /home/pschmitt/bin/433.92-Raspberry-Pi/433-send -p elro -i 4 -u 1 -t -r 10; /home/pschmitt/bin/433.92-Raspberry-Pi/433-send -p elro -i 8 -u 1 -t -r 10"
+    sudo su -c "pilight-send -p elro -s 1 -u 1 -t; pilight-send -p elro -s 1 -u 2 -t; pilight-send -p elro -s 1 -u 4 -t; pilight-send -p elro -s 1 -u 8 -t"
 }
 
 loff() {
-    sudo su -c "/home/pschmitt/bin/433.92-Raspberry-Pi/433-send -p elro -i 1 -u 1 -r 10 -t --off; /home/pschmitt/bin/433.92-Raspberry-Pi/433-send -p elro -i 2 -u 1 -r 10 -t --off; /home/pschmitt/bin/433.92-Raspberry-Pi/433-send -p elro -i 4 -u 1 -r 10 -t --off; /home/pschmitt/bin/433.92-Raspberry-Pi/433-send -p elro -i 8 -u 1 -r 10 -t --off"
+    sudo su -c "pilight-send -p elro -s 1 -u 1 -f; pilight-send -p elro -s 1 -u 2 -f; pilight-send -p elro -s 1 -u 4 -f; pilight-send -p elro -s 1 -u 8 -f"
 }
 
 case $# in
