@@ -13,19 +13,19 @@ lamp() {
     local cmd="pilight-send -p elro -s 1 -u"
     cmd="${cmd} $i"
     [[ "$2" == "on" ]] && cmd="${cmd} -t" || cmd="${cmd} -f"
-    eval $cmd
+    eval "$cmd"
 }
 
 # Lamp on/off
 lon() {
-    for l in 1 2 3 4; do
-        lamp 1 on
+    for l in 0 1 2 3; do
+        lamp $l on
     done
 }
 
 loff() {
-    for l in 1 2 3 4; do
-        lamp 1 off
+    for l in 0 1 2 3; do
+        lamp $l off
     done
 }
 
